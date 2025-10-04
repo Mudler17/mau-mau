@@ -30,8 +30,8 @@ def card_str(card): r,s=card; return f"{r}{s}"
 def card_html(card, size="md"):
     r,s = card
     col = suit_color(s)
-    pads = {"sm":"6px 10px","md":"10px 14px","lg":"14px 18px","xl":"22px 28px"}
-    fonts = {"sm":"1.0rem","md":"1.15rem","lg":"1.35rem","xl":"1.8rem"}
+    pads = {"sm":"8px 12px","md":"12px 16px","lg":"16px 22px","xl":"26px 34px"}
+    fonts = {"sm":"1.05rem","md":"1.25rem","lg":"1.5rem","xl":"1.95rem"}
     brds = {"sm":"2px","md":"3px","lg":"4px","xl":"5px"}
     return f"""
     <div style="
@@ -39,14 +39,14 @@ def card_html(card, size="md"):
       border:{brds[size]} solid {col};border-radius:16px;font-weight:900;
       font-size:{fonts[size]};letter-spacing:.2px;
       font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
-      color:{col};background:#fff;box-shadow:0 2px 5px rgba(0,0,0,.1);user-select:none;">
+      color:{col};background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.12);user-select:none;">
       {html.escape(r)}{emoji_suit(s)}
     </div>
     """
 
 def suit_badge_html(s):
     col=suit_color(s)
-    return f"<span style='border:2px solid {col};color:{col};padding:1px 8px;border-radius:10px;font-weight:800;background:#fff;margin-left:6px'>{emoji_suit(s)}</span>"
+    return f"<span style='border:2px solid {col};color:{col};padding:2px 10px;border-radius:10px;font-weight:900;background:#fff;margin-left:8px'>{emoji_suit(s)}</span>"
 
 # ---------- State-Setup ----------
 def init_session():
@@ -72,8 +72,6 @@ def start_game(state):
         log=[("System", f"Start {card_str(top)}", top, None)],
         awaiting_wish=False,
         last_action={p: {"card":None,"quip":None,"ts":0.0} for p in PLAYERS},
-        step_pause=0.7,       # sichtbare Pause zwischen Zügen
-        pause_until=0.0       # Timestamp bis wann pausiert wird
     ))
 
 # ---------- Engine ----------
@@ -110,7 +108,6 @@ def quip(action):
 
 def mark_last_action(state, player, card=None, q=None):
     state["last_action"][player]={"card":card,"quip":q,"ts":time.time()}
-    state["pause_until"]=time.time()+state["step_pause"]
 
 def play_card(state, player, card):
     state["hands"][player].remove(card)
@@ -119,7 +116,7 @@ def play_card(state, player, card):
     state["log"].append((player, f"legt {card_str(card)}", card, None))
     if card[0]=="7": state["pending_draw"]+=2
     elif card[0]=="8": state["skip_next"]=True
-    if end_if_winner(state, player): return
+    end_if_winner(state, player)  # setzt ggf. winner/game_over
 
 def enforce_pending_draw(state):
     cur=PLAYERS[state["current"]]
@@ -142,13 +139,13 @@ def bot_choose_wish(hand):
     return max(suit_counts.items(), key=lambda x:(x[1],random.random()))[0]
 
 def do_one_bot_step(state):
-    """Genau EINEN Schritt machen und pausieren -> Animation sichtbar."""
+    """Genau EINEN Bot-Schritt (manuell per Button)."""
     if state["game_over"]: return
     player = PLAYERS[state["current"]]
     if player=="Du": return
 
     if enforce_pending_draw(state):
-        advance_turn(state); mark_last_action(state, player, None, quip("draw")); return
+        advance_turn(state); return
 
     hand=state["hands"][player]; top=state["discards"][-1]
     playable=[c for c in hand if can_play(c,top,state["wished_suit"])]
@@ -161,8 +158,8 @@ def do_one_bot_step(state):
             mark_last_action(state,player,None,quip("draw"))
         else:
             state["log"].append((player,"kann nicht ziehen",None,None))
-            mark_last_action(state,player,None,quip("draw"))
-            advance_turn(state)
+        # Turn bleibt, außer wenn ziehstapel leer → trotzdem weiter
+        advance_turn(state)
         return
 
     # Simple Heuristik
@@ -174,32 +171,31 @@ def do_one_bot_step(state):
     playable.sort(key=score)
     chosen=playable[0]
     play_card(state, player, chosen)
+    mark_last_action(state,player,chosen,quip("play"))
+
     if state["game_over"]:
-        # Animation beim Endstand
+        # Abschluss-Animation
         if state["winner"]=="Du":
             try: st.balloons()
             except: pass
         else:
             try: st.snow()
             except: pass
-        mark_last_action(state, player, chosen, "Matchball!")
         return
-    mark_last_action(state, player, chosen, quip("play"))
+
     if chosen[0]=="J":
         wish=bot_choose_wish(hand)
         state["wished_suit"]=wish
         state["log"].append((player,"wünscht",None,wish))
         mark_last_action(state, player, None, quip("wish"))
 
-    if state["skip_next"] and not state["game_over"]:
+    if state["skip_next"]:
         nxt=PLAYERS[(state["current"]+1)%len(PLAYERS)]
         state["log"].append(("System",f"{nxt} aussetzen",None,None))
         mark_last_action(state, player, None, quip("skip"))
-        advance_turn(state); state["skip_next"]=False
-        return
-
-    if not state["game_over"]:
         advance_turn(state)
+        state["skip_next"]=False
+    advance_turn(state)
 
 # ---------- UI ----------
 st.set_page_config(page_title="Mau-Mau (32 Karten)", page_icon="🃏", layout="wide")
@@ -216,12 +212,12 @@ with left:
         if st.button("🔁 Neues Spiel", use_container_width=True):
             start_game(state); RERUN()
         st.caption("Regeln: 7=+2, 8=Aussetzen, J=Bube wünscht Farbe.")
-
-    # --- Pause-Modus für Animation: nichts tun, nur warten & neu rendern ---
-    now = time.time()
-    if state.get("pause_until", 0) > now:
-        time.sleep(max(0.05, state["pause_until"] - now))
-        RERUN()
+        # Step-Button (manuell)
+        st.markdown("---")
+        if st.button("▶ Nächster Zug (Bot/Flow)", use_container_width=True):
+            # führt EINEN Schritt aus, falls Bot dran ist; sonst tut nichts
+            do_one_bot_step(state)
+            RERUN()
 
     # Zentrale große Ablage
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
@@ -231,46 +227,40 @@ with left:
 
     # Statuszeile
     cols=st.columns(4)
-    cols[0].markdown(f"<b>Aktuell:</b> {html.escape(PLAYERS[state['current']])}", unsafe_allow_html=True)
-    cols[1].markdown(f"<b>Wunsch:</b> {html.escape(state['wished_suit'] or '—')}", unsafe_allow_html=True)
-    cols[2].markdown(f"<b>Ziehstapel:</b> {len(state['draw_pile'])}", unsafe_allow_html=True)
-    cols[3].markdown(f"<b>Abwurf:</b> {len(state['discards'])}", unsafe_allow_html=True)
+    cols[0].markdown(f"<div style='font-size:1.15rem'><b>Aktuell:</b> {html.escape(PLAYERS[state['current']])}</div>", unsafe_allow_html=True)
+    cols[1].markdown(f"<div style='font-size:1.15rem'><b>Wunsch:</b> {html.escape(state['wished_suit'] or '—')}</div>", unsafe_allow_html=True)
+    cols[2].markdown(f"<div style='font-size:1.15rem'><b>Ziehstapel:</b> {len(state['draw_pile'])}</div>", unsafe_allow_html=True)
+    cols[3].markdown(f"<div style='font-size:1.15rem'><b>Abwurf:</b> {len(state['discards'])}</div>", unsafe_allow_html=True)
 
-    # Spieler-Panels (mit Bild) + Mini-Overlay (Karte & Spruch)
+    # Spieler-Panels (mit Bild) + großes Dialog-Overlay
     pc = st.columns(3)
     for col, p in zip(pc, PLAYERS):
         with col:
             bg=PLAYER_BG[p]; bd=PLAYER_BORDER[p]
-            with st.container():
+            container = st.container(border=True)
+            with container:
                 top_row = st.columns([1,3]) if PLAYER_IMG[p] else st.columns([1])
                 if PLAYER_IMG[p]:
                     img_path = os.path.join(os.getcwd(), PLAYER_IMG[p])
                     try:
-                        top_row[0].image(img_path, width=72)
+                        top_row[0].image(img_path, width=78)
                     except Exception:
                         pass
                     with top_row[1]:
-                        st.markdown(f"<div style='font-weight:900;font-size:1.1rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-weight:900;font-size:1.2rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:1.1rem'>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
                 else:
                     with top_row[0]:
-                        st.markdown(f"<div style='font-weight:900;font-size:1.1rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-weight:900;font-size:1.2rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:1.1rem'>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
 
-            # Overlay der letzten Aktion (max ~1 Sekunde sichtbar; wird durch pause_until via RERUN erzwungen)
-            la = state["last_action"].get(p, {})
-            if la and (now - la.get("ts", 0)) < 1.2:
+                la = state["last_action"].get(p, {})
                 if la.get("card"):
                     st.markdown(card_html(la["card"], size="lg"), unsafe_allow_html=True)
                 if la.get("quip"):
-                    st.markdown(f"<div style='opacity:.9'><em>{html.escape(la['quip'])}</em></div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size:1.15rem;opacity:.95'><em>{html.escape(la['quip'])}</em></div>", unsafe_allow_html=True)
 
     st.divider()
-
-    # --- Bot macht genau einen Schritt pro Render (Animation sichtbar) ---
-    if not state["game_over"] and PLAYERS[state["current"]] != "Du" and not state.get("awaiting_wish"):
-        do_one_bot_step(state)
-        RERUN()
 
     # --- Dein Zug ---
     if state["game_over"]:
@@ -283,7 +273,7 @@ with left:
         if picked:
             state["wished_suit"]=picked
             state["log"].append(("Du","wünscht",None,picked))
-            mark_last_action(state,"Du",None,quip("wish"))
+            state["last_action"]["Du"]={"card":None,"quip":quip("wish"),"ts":time.time()}
             advance_turn(state); RERUN()
         st.stop()
     else:
@@ -296,7 +286,7 @@ with left:
                 if st.button(f"😬 {state['pending_draw']} Karten ziehen", type="primary"):
                     draw_cards(state,"Du",state["pending_draw"])
                     state["log"].append(("Du",f"zieht {state['pending_draw']}",None,None))
-                    mark_last_action(state,"Du",None,quip("draw"))
+                    state["last_action"]["Du"]={"card":None,"quip":quip("draw"),"ts":time.time()}
                     state["pending_draw"]=0
                     advance_turn(state); RERUN()
 
@@ -313,12 +303,12 @@ with left:
                         try: st.balloons()
                         except: pass
                         RERUN()
-                    mark_last_action(state,"Du",c,quip("play"))
+                    state["last_action"]["Du"]={"card":c,"quip":quip("play"),"ts":time.time()}
                     if c[0]=="J": state["awaiting_wish"]=True; RERUN()
                     if state["skip_next"]:
                         nxt=PLAYERS[(state["current"]+1)%len(PLAYERS)]
                         state["log"].append(("System",f"{nxt} aussetzen",None,None))
-                        mark_last_action(state,"Du",None,quip("skip"))
+                        state["last_action"]["Du"]={"card":None,"quip":quip("skip"),"ts":time.time()}
                         advance_turn(state); state["skip_next"]=False
                     advance_turn(state); RERUN()
 
@@ -335,14 +325,14 @@ with left:
             if state["draw_pile"]:
                 drawn=state["draw_pile"].pop(); state["hands"]["Du"].append(drawn)
                 state["log"].append(("Du","zieht 1",None,None))
-                mark_last_action(state,"Du",None,quip("draw"))
+                state["last_action"]["Du"]={"card":None,"quip":quip("draw"),"ts":time.time()}
             else:
                 state["log"].append(("System","Ziehstapel leer",None,None))
             advance_turn(state); RERUN()
 
 with right:
     st.subheader("🗒️ Verlauf (kurz · neueste oben)")
-    for entry in reversed(state["log"][-140:]):
+    for entry in reversed(state["log"][-160:]):
         sp,msg,c,w=("System","",None,None)
         if isinstance(entry,(list,tuple)):
             if len(entry)>=1: sp=entry[0]
@@ -353,7 +343,7 @@ with right:
         line=f"{html.escape(sp)}: {html.escape(msg)}"
         badge = suit_badge_html(w) if w in SUITS else ""
         st.markdown(
-            f"<div style='border:3px solid {bd};border-radius:14px;padding:8px 10px;margin-bottom:8px;background:{bg}'>{line}{badge}</div>",
+            f"<div style='border:3px solid {bd};border-radius:14px;padding:10px 12px;margin-bottom:10px;background:{bg};font-size:1.15rem'>{line}{badge}</div>",
             unsafe_allow_html=True
         )
 
