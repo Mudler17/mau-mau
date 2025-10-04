@@ -158,7 +158,6 @@ def do_one_bot_step(state):
             mark_last_action(state,player,None,quip("draw"))
         else:
             state["log"].append((player,"kann nicht ziehen",None,None))
-        # Turn bleibt, außer wenn ziehstapel leer → trotzdem weiter
         advance_turn(state)
         return
 
@@ -212,10 +211,18 @@ with left:
         if st.button("🔁 Neues Spiel", use_container_width=True):
             start_game(state); RERUN()
         st.caption("Regeln: 7=+2, 8=Aussetzen, J=Bube wünscht Farbe.")
-        # Step-Button (manuell)
-        st.markdown("---")
-        if st.button("▶ Nächster Zug (Bot/Flow)", use_container_width=True):
-            # führt EINEN Schritt aus, falls Bot dran ist; sonst tut nichts
+
+        # Farblicher Step-Button je nach aktuellem Spieler
+        cur = PLAYERS[state["current"]]
+        bg = PLAYER_BG.get(cur, "#fff")
+        bd = PLAYER_BORDER.get(cur, "#999")
+        st.markdown(
+            f"<div style='border:3px solid {bd};background:{bg};border-radius:14px;padding:8px 8px;margin-top:8px'>",
+            unsafe_allow_html=True
+        )
+        step_clicked = st.button("▶ Nächster Zug (Bot/Flow)", use_container_width=True, type="primary")
+        st.markdown("</div>", unsafe_allow_html=True)
+        if step_clicked:
             do_one_bot_step(state)
             RERUN()
 
@@ -274,6 +281,7 @@ with left:
             state["wished_suit"]=picked
             state["log"].append(("Du","wünscht",None,picked))
             state["last_action"]["Du"]={"card":None,"quip":quip("wish"),"ts":time.time()}
+            state["awaiting_wish"]=False     # <<< WICHTIG: Bugfix gegen „stockt“
             advance_turn(state); RERUN()
         st.stop()
     else:
@@ -304,7 +312,9 @@ with left:
                         except: pass
                         RERUN()
                     state["last_action"]["Du"]={"card":c,"quip":quip("play"),"ts":time.time()}
-                    if c[0]=="J": state["awaiting_wish"]=True; RERUN()
+                    if c[0]=="J":
+                        state["awaiting_wish"]=True
+                        RERUN()
                     if state["skip_next"]:
                         nxt=PLAYERS[(state["current"]+1)%len(PLAYERS)]
                         state["log"].append(("System",f"{nxt} aussetzen",None,None))
