@@ -43,12 +43,13 @@ def suit_badge_html(s):
     return f"""
     <span style="
       display:inline-block;
-      border:1px solid {col};
+      border:2px solid {col};
       color:{col};
-      padding:1px 6px;
-      border-radius:8px;
-      font-weight:700;
-      margin-left:6px;
+      padding:2px 10px;
+      border-radius:10px;
+      font-weight:800;
+      font-size:1.05rem;
+      margin-left:8px;
       background:#fff;
       user-select:none;
     ">{emoji_suit(s)}</span>
@@ -59,21 +60,23 @@ def card_str(card):
     return f"{r}{s}"
 
 def card_html(card):
-    """Gerahmte Card-UI mit Farbe (♥/♦ rot, ♣/♠ schwarz)."""
+    """Gerahmte Card-UI mit Farbe (♥/♦ rot, ♣/♠ schwarz), jetzt größer."""
     r, s = card
     col = suit_color(s)
     return f"""
     <div style="
         display:inline-block;
-        padding:6px 10px;
-        margin:4px 4px 6px 0;
-        border:2px solid {col};
-        border-radius:10px;
-        font-weight:700;
+        padding:10px 14px;
+        margin:6px 6px 10px 0;
+        border:3px solid {col};
+        border-radius:12px;
+        font-weight:900;
+        font-size:1.15rem;
+        letter-spacing:.2px;
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
         color:{col};
         background:#fff;
-        box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        box-shadow: 0 2px 4px rgba(0,0,0,.08);
         user-select:none;
         ">
         {r}{emoji_suit(s)}
@@ -295,8 +298,8 @@ if "initialized" not in st.session_state:
     start_game(st.session_state.state)
 state = st.session_state.state
 
-# Layout: links Spiel, rechts Verlauf (neueste oben)
-left, right = st.columns([2, 1], gap="large")
+# Layout: links Spiel, rechts Verlauf (neueste oben) – etwas breiter links
+left, right = st.columns([5, 3], gap="large")
 
 with left:
     with st.sidebar:
@@ -307,14 +310,14 @@ with left:
         st.caption("Regeln: 7=+2, 8=Aussetzen, J=Bube wünscht Farbe. "
                    "Passend nach Farbe oder Rang; bei Wunschfarbe nur diese Farbe oder J.")
 
-    # Statuszeile
+    # Statuszeile (größer)
     cols = st.columns(4)
-    cols[0].markdown(f"**Aktueller Spieler:** {PLAYERS[state['current']]}")
-    cols[1].markdown(f"**Ablage oben:** {card_str(state['discards'][-1])}")
-    cols[2].markdown(f"**Wunschfarbe:** {state['wished_suit'] or '—'}")
-    cols[3].markdown(f"**Zugstapel:** {len(state['draw_pile'])} Karten")
+    cols[0].markdown(f"<div style='font-size:1.1rem'><b>Aktueller Spieler:</b> {PLAYERS[state['current']]}</div>", unsafe_allow_html=True)
+    cols[1].markdown(f"<div style='font-size:1.1rem'><b>Ablage oben:</b> {card_str(state['discards'][-1])}</div>", unsafe_allow_html=True)
+    cols[2].markdown(f"<div style='font-size:1.1rem'><b>Wunschfarbe:</b> {state['wished_suit'] or '—'}</div>", unsafe_allow_html=True)
+    cols[3].markdown(f"<div style='font-size:1.1rem'><b>Zugstapel:</b> {len(state['draw_pile'])} Karten</div>", unsafe_allow_html=True)
 
-    # Spieler-Panels (eigene Felder mit Hintergrundfarben)
+    # Spieler-Panels (größer)
     pc1, pc2, pc3 = st.columns(3)
     for col, p in zip((pc1, pc2, pc3), PLAYERS):
         with col:
@@ -323,12 +326,12 @@ with left:
             st.markdown(
                 f"""
                 <div style="
-                  border:2px solid {bd};
+                  border:3px solid {bd};
                   background:{bg};
-                  border-radius:14px;
-                  padding:10px 12px;">
-                  <div style="font-weight:700;margin-bottom:6px">{p}</div>
-                  <div>Karten: <b>{len(state['hands'][p])}</b></div>
+                  border-radius:16px;
+                  padding:14px 14px;">
+                  <div style="font-weight:900;margin-bottom:8px;font-size:1.15rem">{p}</div>
+                  <div style="font-size:1.05rem">Karten: <b>{len(state['hands'][p])}</b></div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -359,16 +362,16 @@ with left:
 
     run_spieler_bis_du(state)
 
-    # Deine Karten
+    # Deine Karten (Panel)
     st.markdown(
         f"""
         <div style="
-          border:2px solid {PLAYER_BORDER['Du']};
+          border:3px solid {PLAYER_BORDER['Du']};
           background:{PLAYER_BG['Du']};
-          border-radius:14px;
-          padding:10px 12px;
-          margin-bottom:8px;">
-          <div style="font-weight:700;margin-bottom:6px">🧑 Deine Karten</div>
+          border-radius:16px;
+          padding:14px 14px;
+          margin-bottom:10px;">
+          <div style="font-weight:900;margin-bottom:8px;font-size:1.2rem">🧑 Deine Karten</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -393,14 +396,21 @@ with left:
     playable = [c for c in hand if can_play(c, top, state["wished_suit"])]
     unplayable = [c for c in hand if c not in playable]
 
-    # Kartengitter mit stabilen Keys
-    grid = st.columns(8)
+    # Kartengitter mit stabilen Keys (Buttons größer)
+    grid = st.columns(6)  # weniger Spalten → größere Elemente
     for idx, c in enumerate(playable):
-        with grid[idx % 8]:
+        with grid[idx % 6]:
             st.markdown(card_html(c), unsafe_allow_html=True)
-            if st.button(f"legen · {card_str(c)}", key=f"play_{c[0]}_{c[1]}_{idx}"):
+            if st.button(f"🂡 Legen: {card_str(c)}", key=f"play_{c[0]}_{c[1]}_{idx}"):
                 play_card(state, "Du", c)
                 if state["game_over"]:
+                    # Animation je nach Ausgang
+                    if state["winner"] == "Du":
+                        try: st.balloons()
+                        except: pass
+                    else:
+                        try: st.snow()
+                        except: pass
                     RERUN()
                 quip_after_action(state, "Du", "play")
                 if c[0] == "J" and not state["game_over"]:
@@ -419,9 +429,9 @@ with left:
 
     if unplayable:
         st.caption("Nicht spielbar:")
-        ugrid = st.columns(8)
+        ugrid = st.columns(6)
         for idx, c in enumerate(unplayable):
-            with ugrid[idx % 8]:
+            with ugrid[idx % 6]:
                 st.markdown(card_html(c), unsafe_allow_html=True)
 
     draw_disabled = state["pending_draw"] > 0 and PLAYERS[state["current"]] == "Du"
@@ -440,20 +450,31 @@ with left:
 
 with right:
     st.subheader("🗒️ Spielverlauf (neueste oben)")
-    # Neueste oben
-    for speaker, line, c, wished in reversed(state["log"][-180:]):
+    # Neueste oben; Log-Einträge defensiv normalisieren (2..4 Felder erlaubt)
+    for entry in reversed(state["log"][-180:]):
+        speaker = "System"
+        line = ""
+        c = None
+        wished = None
+        if isinstance(entry, (list, tuple)):
+            if len(entry) >= 1: speaker = entry[0]
+            if len(entry) >= 2: line = entry[1]
+            if len(entry) >= 3: c = entry[2]
+            if len(entry) >= 4: wished = entry[3]
+
         bg = PLAYER_BG.get(speaker, "#fff")
         bd = PLAYER_BORDER.get(speaker, "#ccc")
-        speaker_tag = "" if speaker == "System" else f"<strong>{speaker}:</strong> "
+        speaker_tag = "" if speaker == "System" else f"<strong style='font-size:1.05rem'>{speaker}:</strong> "
         extra = suit_badge_html(wished) if wished in SUITS else ""
         st.markdown(
             f"""
             <div style="
-                border:2px solid {bd};
-                border-radius:12px;
-                padding:8px 10px;
-                margin-bottom:8px;
+                border:3px solid {bd};
+                border-radius:14px;
+                padding:10px 12px;
+                margin-bottom:10px;
                 background:{bg};
+                font-size:1.05rem;
                 ">
                 {speaker_tag}{line}{extra}
             </div>
