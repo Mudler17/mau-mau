@@ -11,38 +11,72 @@ def RERUN():
 # -------------- Game Config (Mau-Mau, 32-Karten Skatdeck) -----------------
 SUITS = ["♠", "♥", "♦", "♣"]
 RANKS = ["7", "8", "9", "10", "J", "Q", "K", "A"]
-PLAYERS = ["Du", "Spieler 1", "Spieler 2"]   # <- Umbenannt
+PLAYERS = ["Du", "Spieler 1", "Spieler 2"]
 START_CARDS = 5
 
-# -------------- Hilfsfunktionen -------------------------------------------
+# Farben / Styles für Spieler-Panels & Verlauf
+PLAYER_BG = {
+    "Du":        "#e7f0ff",
+    "Spieler 1": "#e8f7ee",
+    "Spieler 2": "#fff7d6",
+    "System":    "#f2f2f2",
+}
+PLAYER_BORDER = {
+    "Du":        "#6aa0ff",
+    "Spieler 1": "#45c08b",
+    "Spieler 2": "#e5c300",
+    "System":    "#e0e0e0",
+}
+
+# -------------- Darstellungs-Helfer ---------------------------------------
 
 def emoji_suit(s):
+    # Darstellung: Herz/Karo rot (Emoji), Pik/Kreuz schwarz
     return {"♥": "♥️", "♦": "♦️", "♠": "♠", "♣": "♣"}[s]
+
+def suit_color(s):
+    return "#d00" if s in ("♥", "♦") else "#111"
+
+def suit_badge_html(s):
+    """Kleiner farbiger Suit-Badge (für Wunschfarbe im Verlauf)."""
+    col = suit_color(s)
+    return f"""
+    <span style="
+      display:inline-block;
+      border:1px solid {col};
+      color:{col};
+      padding:1px 6px;
+      border-radius:8px;
+      font-weight:700;
+      margin-left:6px;
+      background:#fff;
+      user-select:none;
+    ">{emoji_suit(s)}</span>
+    """
 
 def card_str(card):
     r, s = card
     return f"{r}{s}"
 
 def card_html(card):
+    """Gerahmte Card-UI mit Farbe (♥/♦ rot, ♣/♠ schwarz)."""
     r, s = card
-    suit = emoji_suit(s)
-    color = "#d00" if s in ("♥", "♦") else "#111"
-    border = f"2px solid {color}"
+    col = suit_color(s)
     return f"""
     <div style="
         display:inline-block;
         padding:6px 10px;
-        margin:4px;
-        border:{border};
+        margin:4px 4px 6px 0;
+        border:2px solid {col};
         border-radius:10px;
         font-weight:700;
         font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-        color:{color};
+        color:{col};
         background:#fff;
         box-shadow: 0 1px 2px rgba(0,0,0,.06);
         user-select:none;
         ">
-        {r}{suit}
+        {r}{emoji_suit(s)}
     </div>
     """
 
@@ -55,6 +89,8 @@ def can_play(card, top_card, wished_suit):
 def new_deck():
     return [(r, s) for s in SUITS for r in RANKS]
 
+# -------------- Kern-Logik ------------------------------------------------
+
 def reshuffle_if_needed(state):
     if not state["draw_pile"]:
         if len(state["discards"]) <= 1:
@@ -64,7 +100,7 @@ def reshuffle_if_needed(state):
         random.shuffle(pool)
         state["draw_pile"] = pool
         state["discards"] = [top]
-        state["log"].append(("System", "🔄 Ziehstapel neu gemischt.", None))
+        state["log"].append(("System", "🔄 Ziehstapel neu gemischt.", None, None))
 
 def draw_cards(state, player, n):
     for _ in range(n):
@@ -101,14 +137,15 @@ def start_game(state):
         skip_next=False,
         winner=None,
         game_over=False,
-        log=[("System", f"🃏 Startkarte: {card_str(top)}", top)],
+        # Log-Eintrag (speaker, text, card, wished_suit_for_display)
+        log=[("System", f"🃏 Startkarte: {card_str(top)}", top, None)],
         awaiting_wish=False,
     ))
 
 def say(state, player, line):
-    state["log"].append((player, line, None))
+    state["log"].append((player, line, None, None))
 
-def quip_after_action(state, player, action, card=None):
+def quip_after_action(state, player, action):
     jokes_play = [
         "Dezent wie ein Presslufthammer 😎",
         "Ich nenne das: taktische Eleganz.",
@@ -139,12 +176,21 @@ def quip_after_action(state, player, action, card=None):
     elif action == "wish":
         say(state, player, random.choice(jokes_wish))
 
+def end_if_winner(state, player):
+    """Sofort beenden, wenn jemand 0 Karten hat (deine Vorgabe)."""
+    if len(state["hands"][player]) == 0:
+        state["winner"] = player
+        state["game_over"] = True
+        return True
+    return False
+
 def play_card(state, player, card):
     state["hands"][player].remove(card)
     state["discards"].append(card)
-    state["log"].append((player, f"▶️ spielt {card_str(card)}", card))
     state["wished_suit"] = None
+    state["log"].append((player, f"▶️ legt {card_str(card)}", card, None))
 
+    # Effekte
     rank = card[0]
     if rank == "7":
         state["pending_draw"] += 2
@@ -152,9 +198,9 @@ def play_card(state, player, card):
         state["skip_next"] = True
     # J: Wunsch folgt separat
 
-    if len(state["hands"][player]) == 0:
-        state["winner"] = player
-        state["game_over"] = True
+    # Sofortiges Ende, falls Hand leer
+    if end_if_winner(state, player):
+        return
 
 def enforce_pending_draw(state):
     cur = PLAYERS[state["current"]]
@@ -164,7 +210,7 @@ def enforce_pending_draw(state):
                         for c in state["hands"][cur])
         if not can_stack:
             draw_cards(state, cur, state["pending_draw"])
-            state["log"].append((cur, f"😬 zieht {state['pending_draw']} Karten.", None))
+            state["log"].append((cur, f"😬 zieht {state['pending_draw']} Karten.", None, None))
             quip_after_action(state, cur, "draw")
             state["pending_draw"] = 0
             return True
@@ -195,18 +241,20 @@ def bot_turn(state, player):
         if state["draw_pile"]:
             drawn = state["draw_pile"].pop()
             hand.append(drawn)
-            state["log"].append((player, "🂠 zieht 1 Karte.", None))
+            state["log"].append((player, "🂠 zieht 1 Karte.", None, None))
             quip_after_action(state, player, "draw")
             if can_play(drawn, top, state["wished_suit"]):
                 play_card(state, player, drawn)
-                quip_after_action(state, player, "play", drawn)
+                if state["game_over"]:
+                    return
+                quip_after_action(state, player, "play")
                 if drawn[0] == "J" and not state["game_over"]:
                     wish = bot_choose_wish(hand)
                     state["wished_suit"] = wish
-                    state["log"].append((player, f"🎯 wünscht {wish}", None))
+                    state["log"].append((player, f"🎯 wünscht {wish}", None, wish))
                     quip_after_action(state, player, "wish")
         else:
-            state["log"].append((player, "🂠 kann nicht ziehen (leer).", None))
+            state["log"].append((player, "🂠 kann nicht ziehen (leer).", None, None))
     else:
         def score(c):
             if c[0] == "7": return 0
@@ -216,16 +264,18 @@ def bot_turn(state, player):
         playable.sort(key=score)
         chosen = playable[0]
         play_card(state, player, chosen)
-        quip_after_action(state, player, "play", chosen)
+        if state["game_over"]:
+            return
+        quip_after_action(state, player, "play")
         if chosen[0] == "J" and not state["game_over"]:
             wish = bot_choose_wish(hand)
             state["wished_suit"] = wish
-            state["log"].append((player, f"🎯 wünscht {wish}", None))
+            state["log"].append((player, f"🎯 wünscht {wish}", None, wish))
             quip_after_action(state, player, "wish")
 
     if state["skip_next"] and not state["game_over"]:
         nxt = PLAYERS[next_player_index(state["current"])]
-        state["log"].append(("System", f"⏭️ {nxt} wird übersprungen.", None))
+        state["log"].append(("System", f"⏭️ {nxt} wird übersprungen.", None, None))
         quip_after_action(state, player, "skip")
         advance_turn(state)
         state["skip_next"] = False
@@ -264,16 +314,29 @@ with left:
     cols[2].markdown(f"**Wunschfarbe:** {state['wished_suit'] or '—'}")
     cols[3].markdown(f"**Zugstapel:** {len(state['draw_pile'])} Karten")
 
-    # Gegner-Infos
-    oc1, oc2 = st.columns(2)
-    oc1.subheader("🧑‍💻 Spieler 1")
-    oc1.markdown(f"Karten: **{len(state['hands']['Spieler 1'])}**")
-    oc2.subheader("🧑‍💻 Spieler 2")
-    oc2.markdown(f"Karten: **{len(state['hands']['Spieler 2'])}**")
+    # Spieler-Panels (eigene Felder mit Hintergrundfarben)
+    pc1, pc2, pc3 = st.columns(3)
+    for col, p in zip((pc1, pc2, pc3), PLAYERS):
+        with col:
+            bg = PLAYER_BG[p]
+            bd = PLAYER_BORDER[p]
+            st.markdown(
+                f"""
+                <div style="
+                  border:2px solid {bd};
+                  background:{bg};
+                  border-radius:14px;
+                  padding:10px 12px;">
+                  <div style="font-weight:700;margin-bottom:6px">{p}</div>
+                  <div>Karten: <b>{len(state['hands'][p])}</b></div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     st.divider()
 
-    def run_bots_until_human(state):
+    def run_spieler_bis_du(state):
         safety = 0
         while not state["game_over"] and PLAYERS[state["current"]] != "Du" and safety < 200:
             bot_turn(state, PLAYERS[state["current"]])
@@ -284,21 +347,33 @@ with left:
         st.info("Du hast einen Buben gespielt. Wähle eine Wunschfarbe:")
         wish_cols = st.columns(4)
         for i, s in enumerate(SUITS):
-            label = emoji_suit(s)
-            if wish_cols[i].button(label, key=f"wish_{s}"):
+            if wish_cols[i].button(emoji_suit(s), key=f"wish_{s}"):
                 state["wished_suit"] = s
-                state["log"].append(("Du", f"🎯 wünscht {s}", None))
+                state["log"].append(("Du", f"🎯 wünscht {s}", None, s))
                 quip_after_action(state, "Du", "wish")
                 state["awaiting_wish"] = False
                 advance_turn(state)
-                run_bots_until_human(state)
+                run_spieler_bis_du(state)
                 RERUN()
         st.stop()
 
-    run_bots_until_human(state)
+    run_spieler_bis_du(state)
 
     # Deine Karten
-    st.subheader("🧑 Deine Karten")
+    st.markdown(
+        f"""
+        <div style="
+          border:2px solid {PLAYER_BORDER['Du']};
+          background:{PLAYER_BG['Du']};
+          border-radius:14px;
+          padding:10px 12px;
+          margin-bottom:8px;">
+          <div style="font-weight:700;margin-bottom:6px">🧑 Deine Karten</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     hand = state["hands"]["Du"]
     top = state["discards"][-1]
 
@@ -308,36 +383,38 @@ with left:
         if not can_stack:
             if st.button(f"😬 {state['pending_draw']} Karten ziehen", type="primary", key="btn_force_draw"):
                 draw_cards(state, "Du", state["pending_draw"])
-                state["log"].append(("Du", f"😬 zieht {state['pending_draw']} Karten.", None))
+                state["log"].append(("Du", f"😬 zieht {state['pending_draw']} Karten.", None, None))
                 quip_after_action(state, "Du", "draw")
                 state["pending_draw"] = 0
                 advance_turn(state)
-                run_bots_until_human(state)
+                run_spieler_bis_du(state)
                 RERUN()
 
     playable = [c for c in hand if can_play(c, top, state["wished_suit"])]
     unplayable = [c for c in hand if c not in playable]
 
-    # Kartengitter mit stabilen Keys (ohne random())
+    # Kartengitter mit stabilen Keys
     grid = st.columns(8)
     for idx, c in enumerate(playable):
         with grid[idx % 8]:
             st.markdown(card_html(c), unsafe_allow_html=True)
             if st.button(f"legen · {card_str(c)}", key=f"play_{c[0]}_{c[1]}_{idx}"):
                 play_card(state, "Du", c)
-                quip_after_action(state, "Du", "play", c)
+                if state["game_over"]:
+                    RERUN()
+                quip_after_action(state, "Du", "play")
                 if c[0] == "J" and not state["game_over"]:
                     state["awaiting_wish"] = True
                     RERUN()
                 if state["skip_next"] and not state["game_over"]:
                     nxt = PLAYERS[next_player_index(state["current"])]
-                    state["log"].append(("System", f"⏭️ {nxt} wird übersprungen.", None))
+                    state["log"].append(("System", f"⏭️ {nxt} wird übersprungen.", None, None))
                     quip_after_action(state, "Du", "skip")
                     advance_turn(state)
                     state["skip_next"] = False
                 if not state["game_over"]:
                     advance_turn(state)
-                    run_bots_until_human(state)
+                    run_spieler_bis_du(state)
                 RERUN()
 
     if unplayable:
@@ -353,29 +430,32 @@ with left:
         if state["draw_pile"]:
             drawn = state["draw_pile"].pop()
             state["hands"]["Du"].append(drawn)
-            state["log"].append(("Du", "🂠 zieht 1 Karte.", None))
+            state["log"].append(("Du", "🂠 zieht 1 Karte.", None, None))
             quip_after_action(state, "Du", "draw")
         else:
-            state["log"].append(("System", "🂠 Ziehstapel leer.", None))
+            state["log"].append(("System", "🂠 Ziehstapel leer.", None, None))
         advance_turn(state)
-        run_bots_until_human(state)
+        run_spieler_bis_du(state)
         RERUN()
 
 with right:
     st.subheader("🗒️ Spielverlauf (neueste oben)")
-    for speaker, line, c in reversed(state["log"][-160:]):
-        bubble_bg = "#f6f6f6" if speaker in ("System",) else "#fff"
-        speaker_tag = f"<strong>{speaker}:</strong> " if speaker not in ("System",) else ""
+    # Neueste oben
+    for speaker, line, c, wished in reversed(state["log"][-180:]):
+        bg = PLAYER_BG.get(speaker, "#fff")
+        bd = PLAYER_BORDER.get(speaker, "#ccc")
+        speaker_tag = "" if speaker == "System" else f"<strong>{speaker}:</strong> "
+        extra = suit_badge_html(wished) if wished in SUITS else ""
         st.markdown(
             f"""
             <div style="
-                border:1px solid #e6e6e6;
+                border:2px solid {bd};
                 border-radius:12px;
                 padding:8px 10px;
                 margin-bottom:8px;
-                background:{bubble_bg};
+                background:{bg};
                 ">
-                {speaker_tag}{line}
+                {speaker_tag}{line}{extra}
             </div>
             """,
             unsafe_allow_html=True
@@ -383,6 +463,18 @@ with right:
         if c:
             st.markdown(card_html(c), unsafe_allow_html=True)
 
+    # Spielende + Animationen
     if state["game_over"]:
-        st.success(f"🏁 Spielende! **{state['winner']}** hat gewonnen.")
+        if state["winner"] == "Du":
+            st.success(f"🏁 Spielende! **{state['winner']}** hat gewonnen. 🎉")
+            try:
+                st.balloons()
+            except Exception:
+                pass
+        else:
+            st.error(f"🏁 Spielende! **{state['winner']}** hat gewonnen. 😢")
+            try:
+                st.snow()
+            except Exception:
+                pass
         st.stop()
