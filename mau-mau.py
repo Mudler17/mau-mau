@@ -116,7 +116,7 @@ def play_card(state, player, card):
     state["log"].append((player, f"legt {card_str(card)}", card, None))
     if card[0]=="7": state["pending_draw"]+=2
     elif card[0]=="8": state["skip_next"]=True
-    end_if_winner(state, player)  # setzt ggf. winner/game_over
+    end_if_winner(state, player)
 
 def enforce_pending_draw(state):
     cur=PLAYERS[state["current"]]
@@ -173,7 +173,6 @@ def do_one_bot_step(state):
     mark_last_action(state,player,chosen,quip("play"))
 
     if state["game_over"]:
-        # Abschluss-Animation
         if state["winner"]=="Du":
             try: st.balloons()
             except: pass
@@ -212,7 +211,7 @@ with left:
             start_game(state); RERUN()
         st.caption("Regeln: 7=+2, 8=Aussetzen, J=Bube wünscht Farbe.")
 
-        # Farblicher Step-Button je nach aktuellem Spieler
+        # Farblicher Step-Button je nach aktuellem Spieler (nur sinnvoll, wenn nicht Du)
         cur = PLAYERS[state["current"]]
         bg = PLAYER_BG.get(cur, "#fff")
         bd = PLAYER_BORDER.get(cur, "#999")
@@ -220,7 +219,8 @@ with left:
             f"<div style='border:3px solid {bd};background:{bg};border-radius:14px;padding:8px 8px;margin-top:8px'>",
             unsafe_allow_html=True
         )
-        step_clicked = st.button("▶ Nächster Zug (Bot/Flow)", use_container_width=True, type="primary")
+        label = "▶ Nächster Zug" if cur != "Du" else "▶ Nächster Zug (wartet – Du bist dran)"
+        step_clicked = st.button(label, use_container_width=True, type="primary", disabled=(cur=="Du"))
         st.markdown("</div>", unsafe_allow_html=True)
         if step_clicked:
             do_one_bot_step(state)
@@ -239,68 +239,74 @@ with left:
     cols[2].markdown(f"<div style='font-size:1.15rem'><b>Ziehstapel:</b> {len(state['draw_pile'])}</div>", unsafe_allow_html=True)
     cols[3].markdown(f"<div style='font-size:1.15rem'><b>Abwurf:</b> {len(state['discards'])}</div>", unsafe_allow_html=True)
 
-    # Spieler-Panels (mit Bild) + großes Dialog-Overlay
+    # Spieler-Panels farbig hinterlegt (Hintergrund + Rahmen) mit Bild & Overlay
     pc = st.columns(3)
     for col, p in zip(pc, PLAYERS):
         with col:
             bg=PLAYER_BG[p]; bd=PLAYER_BORDER[p]
-            container = st.container(border=True)
-            with container:
-                top_row = st.columns([1,3]) if PLAYER_IMG[p] else st.columns([1])
-                if PLAYER_IMG[p]:
-                    img_path = os.path.join(os.getcwd(), PLAYER_IMG[p])
-                    try:
-                        top_row[0].image(img_path, width=78)
-                    except Exception:
-                        pass
-                    with top_row[1]:
-                        st.markdown(f"<div style='font-weight:900;font-size:1.2rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:1.1rem'>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
-                else:
-                    with top_row[0]:
-                        st.markdown(f"<div style='font-weight:900;font-size:1.2rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:1.1rem'>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
-
-                la = state["last_action"].get(p, {})
-                if la.get("card"):
-                    st.markdown(card_html(la["card"], size="lg"), unsafe_allow_html=True)
-                if la.get("quip"):
-                    st.markdown(f"<div style='font-size:1.15rem;opacity:.95'><em>{html.escape(la['quip'])}</em></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div style="border:3px solid {bd}; background:{bg}; border-radius:16px; padding:12px;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    {f'<img src="file://{os.path.join(os.getcwd(), PLAYER_IMG[p])}" style="width:78px;height:78px;border-radius:12px;border:3px solid {bd};object-fit:cover;" />' if PLAYER_IMG[p] else ''}
+                    <div>
+                      <div style="font-weight:900;font-size:1.2rem">{html.escape(p)}</div>
+                      <div style="font-size:1.1rem">Karten: <b>{len(state['hands'][p])}</b></div>
+                    </div>
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            la = state["last_action"].get(p, {})
+            if la.get("card"):
+                st.markdown(card_html(la["card"], size="lg"), unsafe_allow_html=True)
+            if la.get("quip"):
+                st.markdown(f"<div style='font-size:1.15rem;opacity:.95'><em>{html.escape(la['quip'])}</em></div>", unsafe_allow_html=True)
 
     st.divider()
 
-    # --- Dein Zug ---
-    if state["game_over"]:
-        pass
-    elif state.get("awaiting_wish"):
-        st.info("Du hast einen Buben gespielt. Wähle eine Wunschfarbe:")
-        wc = st.columns(4); picked=None
-        for i,s in enumerate(SUITS):
-            if wc[i].button(emoji_suit(s), key=f"wish_{s}"): picked=s
-        if picked:
-            state["wished_suit"]=picked
-            state["log"].append(("Du","wünscht",None,picked))
-            state["last_action"]["Du"]={"card":None,"quip":quip("wish"),"ts":time.time()}
-            state["awaiting_wish"]=False     # <<< WICHTIG: Bugfix gegen „stockt“
-            advance_turn(state); RERUN()
-        st.stop()
-    else:
-        hand = state["hands"]["Du"]; top = state["discards"][-1]
+    # --- Dein Zug: Optionen NUR wenn du am Zug bist -----------------------
+    is_your_turn = (PLAYERS[state["current"]] == "Du")
 
-        # Pflichtziehen (7)
-        if PLAYERS[state["current"]] == "Du" and state["pending_draw"]>0:
-            can_stack = any((c[0]=="7") and can_play(c, top, state["wished_suit"]) for c in hand)
-            if not can_stack:
-                if st.button(f"😬 {state['pending_draw']} Karten ziehen", type="primary"):
-                    draw_cards(state,"Du",state["pending_draw"])
-                    state["log"].append(("Du",f"zieht {state['pending_draw']}",None,None))
-                    state["last_action"]["Du"]={"card":None,"quip":quip("draw"),"ts":time.time()}
-                    state["pending_draw"]=0
-                    advance_turn(state); RERUN()
+    # Wunschfarbe-Auswahl NUR wenn du zuvor J gelegt hast und jetzt die Wahl ansteht
+    if state.get("awaiting_wish"):
+        if is_your_turn:
+            st.info("Du hast einen Buben gespielt. Wähle eine Wunschfarbe:")
+            wc = st.columns(4); picked=None
+            for i,s in enumerate(SUITS):
+                if wc[i].button(emoji_suit(s), key=f"wish_{s}"): picked=s
+            if picked:
+                state["wished_suit"]=picked
+                state["log"].append(("Du","wünscht",None,picked))
+                state["last_action"]["Du"]={"card":None,"quip":quip("wish"),"ts":time.time()}
+                state["awaiting_wish"]=False
+                advance_turn(state); RERUN()
+            st.stop()
+        else:
+            st.info("Wunschfarbe folgt – du bist gleich dran.")
+            st.stop()
 
-        playable=[c for c in hand if can_play(c, top, state["wished_suit"])]
-        unplayable=[c for c in hand if c not in playable]
+    # Deine Hand immer sichtbar — aber Buttons nur wenn am Zug
+    hand = state["hands"]["Du"]
+    top = state["discards"][-1]
 
+    # Pflichtziehen (7) – Button nur wenn am Zug
+    if is_your_turn and state["pending_draw"]>0:
+        can_stack = any((c[0]=="7") and can_play(c, top, state["wished_suit"]) for c in hand)
+        if not can_stack:
+            if st.button(f"😬 {state['pending_draw']} Karten ziehen", type="primary"):
+                draw_cards(state,"Du",state["pending_draw"])
+                state["log"].append(("Du",f"zieht {state['pending_draw']}",None,None))
+                state["last_action"]["Du"]={"card":None,"quip":quip("draw"),"ts":time.time()}
+                state["pending_draw"]=0
+                advance_turn(state); RERUN()
+
+    playable=[c for c in hand if can_play(c, top, state["wished_suit"])]
+    unplayable=[c for c in hand if c not in playable]
+
+    if is_your_turn:
+        st.subheader("🧑 Deine Karten (du bist dran)")
         grid = st.columns(6)
         for idx,c in enumerate(playable):
             with grid[idx%6]:
@@ -329,8 +335,7 @@ with left:
                 with ugrid[idx%6]:
                     st.markdown(card_html(c, size="sm"), unsafe_allow_html=True)
 
-        draw_disabled = state["pending_draw"]>0 and PLAYERS[state["current"]]=="Du"
-        if st.button("🂠 1 Karte ziehen", disabled=draw_disabled):
+        if st.button("🂠 1 Karte ziehen", disabled=(state["pending_draw"]>0)):
             reshuffle_if_needed(state)
             if state["draw_pile"]:
                 drawn=state["draw_pile"].pop(); state["hands"]["Du"].append(drawn)
@@ -339,6 +344,14 @@ with left:
             else:
                 state["log"].append(("System","Ziehstapel leer",None,None))
             advance_turn(state); RERUN()
+    else:
+        st.subheader("🧑 Deine Karten (warte auf deinen Zug)")
+        # Nur Anzeige der Karten ohne Interaktion
+        grid = st.columns(6)
+        for idx,c in enumerate(hand):
+            with grid[idx%6]:
+                st.markdown(card_html(c, size=("md" if c in playable else "sm")), unsafe_allow_html=True)
+        st.caption("Du bist nicht am Zug. Nutze in der Sidebar: **▶ Nächster Zug**.")
 
 with right:
     st.subheader("🗒️ Verlauf (kurz · neueste oben)")
