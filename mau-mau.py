@@ -1,6 +1,7 @@
 import random
 import time
 import html
+import os
 import streamlit as st
 
 # ---------- Rerun-Wrapper ----------
@@ -16,7 +17,7 @@ RANKS = ["7", "8", "9", "10", "J", "Q", "K", "A"]
 PLAYERS = ["Du", "Spieler 1", "Spieler 2"]
 START_CARDS = 5
 
-# Farben & Bilder (Bilder: gleiche Ebene wie diese Datei)
+# Farben & Bilder (Bilder: gleicher Ordner wie diese Datei)
 PLAYER_BG = {"Du":"#e7f0ff","Spieler 1":"#e8f7ee","Spieler 2":"#fff7d6","System":"#f2f2f2"}
 PLAYER_BORDER = {"Du":"#6aa0ff","Spieler 1":"#45c08b","Spieler 2":"#e5c300","System":"#e0e0e0"}
 PLAYER_IMG = {"Du":None, "Spieler 1":"spieler.png", "Spieler 2":"spielerin.png"}
@@ -67,12 +68,12 @@ def start_game(state):
         hands=hands, draw_pile=deck, discards=[top],
         current=0, wished_suit=None, pending_draw=0, skip_next=False,
         winner=None, game_over=False,
-        # Log: (speaker, msg, card_or_None, wished_or_None) — kurz & escapt
+        # kurzer Log: (speaker, msg, card_or_None, wished_or_None)
         log=[("System", f"Start {card_str(top)}", top, None)],
         awaiting_wish=False,
         last_action={p: {"card":None,"quip":None,"ts":0.0} for p in PLAYERS},
-        # Animationsteuerung
-        step_pause=0.6,   # Sekunden zwischen Zügen (sichtbare „Zeitversetzung“)
+        step_pause=0.7,       # sichtbare Pause zwischen Zügen
+        pause_until=0.0       # Timestamp bis wann pausiert wird
     ))
 
 # ---------- Engine ----------
@@ -109,6 +110,7 @@ def quip(action):
 
 def mark_last_action(state, player, card=None, q=None):
     state["last_action"][player]={"card":card,"quip":q,"ts":time.time()}
+    state["pause_until"]=time.time()+state["step_pause"]
 
 def play_card(state, player, card):
     state["hands"][player].remove(card)
@@ -139,17 +141,14 @@ def bot_choose_wish(hand):
     for r,s in hand: suit_counts[s]+=1
     return max(suit_counts.items(), key=lambda x:(x[1],random.random()))[0]
 
-def bot_turn_once(state):
-    """Führt GENAU EINEN Bot-Schritt aus (für sichtbare Animation) und returnt True, wenn ein Schritt gemacht wurde."""
-    if state["game_over"]: return False
+def do_one_bot_step(state):
+    """Genau EINEN Schritt machen und pausieren -> Animation sichtbar."""
+    if state["game_over"]: return
     player = PLAYERS[state["current"]]
-    if player=="Du": return False
+    if player=="Du": return
 
     if enforce_pending_draw(state):
-        advance_turn(state)
-        # Animation Break
-        time.sleep(state["step_pause"]); RERUN()
-        return True
+        advance_turn(state); mark_last_action(state, player, None, quip("draw")); return
 
     hand=state["hands"][player]; top=state["discards"][-1]
     playable=[c for c in hand if can_play(c,top,state["wished_suit"])]
@@ -160,55 +159,47 @@ def bot_turn_once(state):
             drawn=state["draw_pile"].pop(); hand.append(drawn)
             state["log"].append((player,"zieht 1",None,None))
             mark_last_action(state,player,None,quip("draw"))
-            # Animation Break
-            time.sleep(state["step_pause"]); RERUN()
-            return True
         else:
             state["log"].append((player,"kann nicht ziehen",None,None))
+            mark_last_action(state,player,None,quip("draw"))
             advance_turn(state)
-            time.sleep(state["step_pause"]); RERUN()
-            return True
-    else:
-        # simple Heuristik
-        def score(c):
-            if c[0]=="7": return 0
-            if c[0]=="8": return 1
-            if c[0]=="J": return 3
-            return 2
-        playable.sort(key=score)
-        chosen=playable[0]
-        play_card(state,player,chosen)
-        if state["game_over"]:
-            if state["winner"]=="Du":
-                try: st.balloons()
-                except: pass
-            else:
-                try: st.snow()
-                except: pass
-            time.sleep(state["step_pause"]); RERUN()
-            return True
-        mark_last_action(state,player,chosen,quip("play"))
-        if chosen[0]=="J" and not state["game_over"]:
-            wish=bot_choose_wish(hand)
-            state["wished_suit"]=wish
-            state["log"].append((player,"wünscht",None,wish))
-            mark_last_action(state,player,None,quip("wish"))
-            # Animation Break
-            time.sleep(state["step_pause"]); RERUN()
-            return True
+        return
+
+    # Simple Heuristik
+    def score(c):
+        if c[0]=="7": return 0
+        if c[0]=="8": return 1
+        if c[0]=="J": return 3
+        return 2
+    playable.sort(key=score)
+    chosen=playable[0]
+    play_card(state, player, chosen)
+    if state["game_over"]:
+        # Animation beim Endstand
+        if state["winner"]=="Du":
+            try: st.balloons()
+            except: pass
+        else:
+            try: st.snow()
+            except: pass
+        mark_last_action(state, player, chosen, "Matchball!")
+        return
+    mark_last_action(state, player, chosen, quip("play"))
+    if chosen[0]=="J":
+        wish=bot_choose_wish(hand)
+        state["wished_suit"]=wish
+        state["log"].append((player,"wünscht",None,wish))
+        mark_last_action(state, player, None, quip("wish"))
 
     if state["skip_next"] and not state["game_over"]:
         nxt=PLAYERS[(state["current"]+1)%len(PLAYERS)]
         state["log"].append(("System",f"{nxt} aussetzen",None,None))
-        mark_last_action(state,player,None,quip("skip"))
+        mark_last_action(state, player, None, quip("skip"))
         advance_turn(state); state["skip_next"]=False
-        time.sleep(state["step_pause"]); RERUN()
-        return True
+        return
 
-    # normal weiter
-    advance_turn(state)
-    time.sleep(state["step_pause"]); RERUN()
-    return True
+    if not state["game_over"]:
+        advance_turn(state)
 
 # ---------- UI ----------
 st.set_page_config(page_title="Mau-Mau (32 Karten)", page_icon="🃏", layout="wide")
@@ -226,6 +217,12 @@ with left:
             start_game(state); RERUN()
         st.caption("Regeln: 7=+2, 8=Aussetzen, J=Bube wünscht Farbe.")
 
+    # --- Pause-Modus für Animation: nichts tun, nur warten & neu rendern ---
+    now = time.time()
+    if state.get("pause_until", 0) > now:
+        time.sleep(max(0.05, state["pause_until"] - now))
+        RERUN()
+
     # Zentrale große Ablage
     st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
     center = st.columns([1,1,1])
@@ -241,25 +238,28 @@ with left:
 
     # Spieler-Panels (mit Bild) + Mini-Overlay (Karte & Spruch)
     pc = st.columns(3)
-    now = time.time(); show_secs = 1.2
     for col, p in zip(pc, PLAYERS):
         with col:
             bg=PLAYER_BG[p]; bd=PLAYER_BORDER[p]
-            img_html = ""
-            if PLAYER_IMG[p]:
-                img_html = f"<img src='file://{PLAYER_IMG[p]}' style='width:70px;height:70px;border-radius:12px;border:3px solid {bd};object-fit:cover;margin-right:10px'/>"
-            st.markdown(
-                f"""
-                <div style="border:3px solid {bd};background:{bg};border-radius:16px;padding:12px">
-                  <div style="display:flex;align-items:center">{img_html}
-                    <div><div style="font-weight:900;font-size:1.1rem">{html.escape(p)}</div>
-                    <div>Karten: <b>{len(state['hands'][p])}</b></div></div>
-                  </div>
-                </div>
-                """, unsafe_allow_html=True
-            )
+            with st.container():
+                top_row = st.columns([1,3]) if PLAYER_IMG[p] else st.columns([1])
+                if PLAYER_IMG[p]:
+                    img_path = os.path.join(os.getcwd(), PLAYER_IMG[p])
+                    try:
+                        top_row[0].image(img_path, width=72)
+                    except Exception:
+                        pass
+                    with top_row[1]:
+                        st.markdown(f"<div style='font-weight:900;font-size:1.1rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
+                else:
+                    with top_row[0]:
+                        st.markdown(f"<div style='font-weight:900;font-size:1.1rem'>{html.escape(p)}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div>Karten: <b>{len(state['hands'][p])}</b></div>", unsafe_allow_html=True)
+
+            # Overlay der letzten Aktion (max ~1 Sekunde sichtbar; wird durch pause_until via RERUN erzwungen)
             la = state["last_action"].get(p, {})
-            if la and (now - la.get("ts",0)) < show_secs:
+            if la and (now - la.get("ts", 0)) < 1.2:
                 if la.get("card"):
                     st.markdown(card_html(la["card"], size="lg"), unsafe_allow_html=True)
                 if la.get("quip"):
@@ -267,11 +267,10 @@ with left:
 
     st.divider()
 
-    # — Bot Schrittweise spielen für Animation —
-    # Solange Bot am Zug ist, je Render GENAU EINEN Schritt tun:
-    if not state["game_over"]:
-        if PLAYERS[state["current"]] != "Du":
-            bot_turn_once(state)  # macht einen Schritt, wartet, rerunnt
+    # --- Bot macht genau einen Schritt pro Render (Animation sichtbar) ---
+    if not state["game_over"] and PLAYERS[state["current"]] != "Du" and not state.get("awaiting_wish"):
+        do_one_bot_step(state)
+        RERUN()
 
     # --- Dein Zug ---
     if state["game_over"]:
@@ -289,6 +288,7 @@ with left:
         st.stop()
     else:
         hand = state["hands"]["Du"]; top = state["discards"][-1]
+
         # Pflichtziehen (7)
         if PLAYERS[state["current"]] == "Du" and state["pending_draw"]>0:
             can_stack = any((c[0]=="7") and can_play(c, top, state["wished_suit"]) for c in hand)
